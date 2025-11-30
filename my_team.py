@@ -409,14 +409,27 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         my_pos = my_state.get_position()
 
         # Computes whether we're on defense (1) or offense (0)
-        features['on_defense'] = 1
-        if my_state.is_pacman: features['on_defense'] = 0
+        if my_state.scared_timer > 0:
+            features['on_defense'] = 0
+        else:
+            features['on_defense'] = 1 if not my_state.is_pacman else 0
+
+
+        walls = game_state.get_walls()
+        width = walls.width
+        if self.red:
+            border_x = width // 2 - 1
+            target_x = border_x -3
+        else:
+            border_x = width // 2
+            target_x = border_x +3
+        target = (target_x, self.y_target)
 
         # Computes distance to invaders we can see
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
-        if len(invaders) > 0:
+        if len(invaders) > 0 and my_state.scared_timer == 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
             features['invader_distance'] = min(dists)
 
@@ -424,33 +437,44 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
         if action == rev: features['reverse'] = 1
 
-        walls = game_state.get_walls()
-        width = walls.width
-        if self.red:
-            border_x = width // 2 - 1
-        else:
-            border_x = width // 2
-
-        if len(invaders) == 0:
-            target = (border_x, self.y_target)
+        if len(invaders) == 0 and my_state.scared_timer == 0:
             features['target_patrol_dis'] = self.get_maze_distance(my_pos, target)
-            if my_pos[1] == self.y_target:
+            if my_pos == target:
                 self.y_target = 11 if self.y_target == 4 else 4
         else:
             features['target_patrol_dis'] = 0
+        
+        if my_state.scared_timer > 0:
+            dangerous_enemies = [a for a in enemies if a.get_position() is not None]
+            if len(dangerous_enemies) > 0:
+                dists_de = [self.get_maze_distance(my_pos, a.get_position()) for a in dangerous_enemies]
+                if min(dists_de)<5:
+                    features['dangerous_enemy_dis'] = min(dists_de)
+                else:
+                    features['dangerous_enemy_dis'] = 0
+            else:
+                features['dangerous_enemy_dis'] = 0
+        else:
+            features['dangerous_enemy_dis'] = 0
 
-        if my_state.scared_timer > 5:
+        if my_state.scared_timer > 7:
             food_list = self.get_food(successor).as_list()
-            my_pos = successor.get_agent_state(self.index).get_position()
-            min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
-            features['distance_to_food'] = min_distance
+            features['successor_score'] = -len(food_list)
+            if len(food_list) > 0:
+                distances = [self.get_maze_distance(my_pos, f) for f in food_list]
+                features['distance_to_food'] = min(distances)
+            else:
+                features['distance_to_food'] = 0
+            # my_pos = successor.get_agent_state(self.index).get_position()
+            # min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            # features['distance_to_food'] = min_distance
         else:
             if my_state.is_pacman:
                 features['distance_to_food'] = abs(border_x - my_pos[0])
             else:
                 features['distance_to_food'] = 0
-
+        print(features)
         return features
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2, 'target_patrol_dis': -3, 'distance_to_food': -100}
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -5, 'target_patrol_dis': -7, 'distance_to_food': -10, 'dangerous_enemy_dis': 1000, 'successor_score': 100}
