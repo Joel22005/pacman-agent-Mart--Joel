@@ -154,6 +154,8 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
     such an agent.
     """
 
+    y_target = 4
+
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
@@ -177,7 +179,33 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
         if action == rev: features['reverse'] = 1
 
+        walls = game_state.get_walls()
+        width = walls.width
+        if self.red:
+            border_x = width // 2 - 1
+        else:
+            border_x = width // 2
+
+        if len(invaders) == 0:
+            target = (border_x, self.y_target)
+            features['target_patrol_dis'] = self.get_maze_distance(my_pos, target)
+            if my_pos[1] == self.y_target:
+                self.y_target = 11 if self.y_target == 4 else 4
+        else:
+            features['target_patrol_dis'] = 0
+
+        if my_state.scared_timer > 5:
+            food_list = self.get_food(successor).as_list()
+            my_pos = successor.get_agent_state(self.index).get_position()
+            min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            features['distance_to_food'] = min_distance
+        else:
+            if my_state.is_pacman:
+                features['distance_to_food'] = abs(border_x - my_pos[0])
+            else:
+                features['distance_to_food'] = 0
+
         return features
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2, 'target_patrol_dis': -3, 'distance_to_food': -100}
