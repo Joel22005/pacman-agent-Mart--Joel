@@ -1,16 +1,16 @@
 # Team Information
 
-**Course:** _[fill your course code and name]_
+**Course:** IA
 
-**Semester:** Semester 2, 2020
+**Semester:** Semester 1, 2025
 
-**Instructor:** _[name of your instructor]_
+**Instructor:** Anders Jonson
 
-**Team name:** _[replace this with team name in plan text]_
+**Team name:** PACquetes
 
 **Team members:**
 
-* Student 1's Student number - Full Name - Student email - Student Github id
+u197324 - Martí Lapeña Jodar - marti.lopena01@estudiant.upf.edu - martiupf
 * Student 2's Student number - Full Name - Student email - Student Github id
 * Student 3's Student number - Full Name - Student email - Student Github id
 
