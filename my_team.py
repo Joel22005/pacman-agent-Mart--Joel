@@ -122,6 +122,37 @@ class ReflexCaptureAgent(CaptureAgent):
 
 
 class OffensiveReflexAgent(ReflexCaptureAgent):
+    def heuristic(self, pos, goal):
+        return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
+
+    def get_a_star_distance(self, game_state, start, goal):
+        start = (int(start[0]), int(start[1]))
+        goal = (int(goal[0]), int(goal[1]))
+        if start == goal:
+            return 0
+        walls = game_state.get_walls()
+        width, height = walls.width, walls.height
+        open_list = [(self.heuristic(start, goal), 0, start)]
+        closed = set()
+        directions = [(1,0), (-1,0), (0,1), (0,-1)]
+        while open_list:
+            open_list.sort(key=lambda x: x[0])
+            f, g, pos = open_list.pop(0)
+            if pos in closed:
+                continue
+            closed.add(pos)
+            if pos == goal:
+                return g
+            x, y = pos
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and not walls[nx][ny]:
+                    nxt = (nx, ny)
+                    if nxt not in closed:
+                        h = self.heuristic(nxt, goal)
+                        open_list.append((g + 1 + h, g + 1, nxt))
+        return float("inf")
+
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
@@ -133,53 +164,59 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         width, height = layout.width, layout.height
         walls = layout.walls
         mid = width // 2
-        if self.red:  
+        if self.red:
             enemy_positions = [(x, y) for x in range(mid, width) for y in range(height) if not walls[x][y]]
-        else:  
+        else:
             enemy_positions = [(x, y) for x in range(0, mid) for y in range(height) if not walls[x][y]]
         if len(food_list) > 0:
-            min_distance = min([self.get_maze_distance(pos_actual, food) for food in food_list])
-            features['distance_to_food'] = min_distance
+            features['distance_to_food'] = min(
+                self.get_a_star_distance(game_state, pos_actual, food)
+                for food in food_list
+            )
         carrying = estat_actual.num_carrying
-        distances = [self.get_maze_distance(pos_actual, pos) for pos in enemy_positions]
+        distances = [self.get_a_star_distance(game_state, pos_actual, pos) for pos in enemy_positions]
         dist_to_enemy_base = min(distances)
+        features['distance_to_enemy_base'] = dist_to_enemy_base
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         ghosts = []
         scared_ghosts = []
         for e in enemies:
             pos_e = e.get_position()
-            if pos_e is None:
-                continue
-            if not e.is_pacman:
-                if getattr(e, 'scaredTimer', 0) > 0:
-                    scared_ghosts.append(e)
-                else:
-                    ghosts.append(e)
-        if ghosts and pos_actual is not None:
-            manh_dists = [abs(pos_actual[0]-g.get_position()[0]) + abs(pos_actual[1]-g.get_position()[1]) for g in ghosts]
-            min_ghost_dist = min(manh_dists)
-            features['closest_ghost_distance'] = min_ghost_dist
-            features['ghost_near'] = 1 if min_ghost_dist <= 5 else 0
+            if pos_e:
+                if not e.is_pacman:
+                    if getattr(e, 'scaredTimer', 0) > 0:
+                        scared_ghosts.append(e)
+                    else:
+                        ghosts.append(e)
+        if ghosts and pos_actual:
+            dists = [
+                abs(pos_actual[0]-g.get_position()[0]) +
+                abs(pos_actual[1]-g.get_position()[1])
+                for g in ghosts
+            ]
+            min_dist = min(dists)
+            features['closest_ghost_distance'] = min_dist
+            features['ghost_near'] = 1 if min_dist <= 5 else 0
         else:
             features['closest_ghost_distance'] = float('inf')
             features['ghost_near'] = 0
-        if scared_ghosts and pos_actual is not None:
-            manh_dists_s = [abs(pos_actual[0]-g.get_position()[0]) + abs(pos_actual[1]-g.get_position()[1]) for g in scared_ghosts]
-            min_scared_dist = min(manh_dists_s)
-            features['closest_scared_ghost_distance'] = min_scared_dist
-            features['scared_ghost_near'] = 1 if min_scared_dist <= 5 else 0
+        if scared_ghosts and pos_actual:
+            dists = [
+                abs(pos_actual[0]-g.get_position()[0]) +
+                abs(pos_actual[1]-g.get_position()[1])
+                for g in scared_ghosts
+            ]
+            min_dist = min(dists)
+            features['closest_scared_ghost_distance'] = min_dist
+            features['scared_ghost_near'] = 1 if min_dist <= 5 else 0
             timers = [getattr(g, 'scaredTimer', 0) for g in scared_ghosts]
-            near_timers = [t for t, d in zip(timers, manh_dists_s) if d <= 5]
-            features['min_scared_timer'] = min(near_timers) if near_timers else 0
+            near = [t for t, d in zip(timers, dists) if d <= 5]
+            features['min_scared_timer'] = min(near) if near else 0
         else:
             features['closest_scared_ghost_distance'] = float('inf')
             features['scared_ghost_near'] = 0
             features['min_scared_timer'] = 0
-        if carrying > 0:
-            features['distance_to_start'] = dist_to_enemy_base
-        else:
-            features['distance_to_start'] = 0
-        features['distance_to_enemy_base'] = dist_to_enemy_base
+        features['distance_to_start'] = dist_to_enemy_base if carrying > 0 else 0
         return features
 
     def get_weights(self, game_state, action):
@@ -191,25 +228,53 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         estat = game_state.get_agent_state(self.index)
         carrying = estat.num_carrying
         if ghost_near:
-            return {'successor_score': 40.0, 'distance_to_food': -0.5,
-                    'distance_to_start': -5.0, 'distance_to_enemy_base': -2.0, 'ghost_near': -1000}
+            return {
+                'successor_score': 40.0,
+                'distance_to_food': -0.5,
+                'distance_to_start': -5.0,
+                'distance_to_enemy_base': -2.0,
+                'ghost_near': -1000
+            }
         min_scared_timer = features.get('min_scared_timer', 0)
         SCARED_LEAVE_THRESHOLD = 5
         MAX_CARRY = 5
         if scared_near:
             if carrying >= MAX_CARRY or min_scared_timer <= SCARED_LEAVE_THRESHOLD:
-                return {'successor_score': 40.0, 'distance_to_food': -0.5,
-                        'distance_to_start': -5.0, 'distance_to_enemy_base': -2.0}
-            return {'successor_score': 90.0, 'distance_to_food': -4.0,
-                    'distance_to_start': -0.5, 'distance_to_enemy_base': -0.5}
+                return {
+                    'successor_score': 40.0,
+                    'distance_to_food': -0.5,
+                    'distance_to_start': -5.0,
+                    'distance_to_enemy_base': -2.0
+                }
+            return {
+                'successor_score': 90.0,
+                'distance_to_food': -4.0,
+                'distance_to_start': -0.5,
+                'distance_to_enemy_base': -0.5
+            }
         if carrying == 0:
             base = {'successor_score': 100.0, 'distance_to_food': -1.5, 'distance_to_start': 0}
         elif carrying >= 3:
-            base = {'successor_score': 40.0, 'distance_to_food': -0.5, 'distance_to_start': -5.0, 'distance_to_enemy_base': -2.0}
+            base = {
+                'successor_score': 40.0,
+                'distance_to_food': -0.5,
+                'distance_to_start': -5.0,
+                'distance_to_enemy_base': -2.0
+            }
         elif dist_food < dist_enemy:
-            base = {'successor_score': 60.0, 'distance_to_food': -3.0, 'distance_to_start': -1.0, 'distance_to_enemy_base': -0.5}
+            base = {
+                'successor_score': 60.0,
+                'distance_to_food': -3.0,
+                'distance_to_start': -1.0,
+                'distance_to_enemy_base': -0.5
+            }
         else:
-            base = {'successor_score': 40.0, 'distance_to_food': -0.5, 'distance_to_start': -5.0, 'distance_to_enemy_base': -2.0}
+            base = {
+                'successor_score': 40.0,
+                'distance_to_food': -0.5,
+                'distance_to_start': -5.0,
+                'distance_to_enemy_base': -2.0
+            }
         if ghost_near:
             base['ghost_near'] = -1000
             base['closest_ghost_distance'] = 2.0
@@ -224,20 +289,20 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
             pacmans = [e for e in enemies if e.is_pacman and e.get_position() is not None]
             if pacmans:
-                pacmans.sort(key=lambda p: self.get_maze_distance(my_pos, p.get_position()))
+                pacmans.sort(key=lambda p: self.get_a_star_distance(game_state, my_pos, p.get_position()))
                 target = pacmans[0].get_position()
                 return self._move_towards(game_state, target)
             return super().choose_action(game_state)
         enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
-        ghosts = [e for e in enemies if not e.is_pacman and e.get_position() is not None and getattr(e, 'scaredTimer', 0) == 0]
-        scared_ghosts = [e for e in enemies if not e.is_pacman and getattr(e, 'scaredTimer', 0) > 0 and e.get_position() is not None]
+        ghosts = [e for e in enemies if not e.is_pacman and e.get_position() and getattr(e, 'scaredTimer', 0) == 0]
+        scared_ghosts = [e for e in enemies if not e.is_pacman and e.get_position() and getattr(e, 'scaredTimer', 0) > 0]
         GHOST_RADIUS = 6
-        close_ghosts = [g for g in ghosts if self.get_maze_distance(my_pos, g.get_position()) <= GHOST_RADIUS]
+        close_ghosts = [g for g in ghosts if self.get_a_star_distance(game_state, my_pos, g.get_position()) <= GHOST_RADIUS]
         if close_ghosts:
             capsules = self.get_capsules(game_state)
-            nearest_capsule = min(capsules, key=lambda c: self.get_maze_distance(my_pos, c)) if capsules else None
-            dist_home = self.get_maze_distance(my_pos, self.start)
-            if nearest_capsule and self.get_maze_distance(my_pos, nearest_capsule) < dist_home:
+            nearest_capsule = min(capsules, key=lambda c: self.get_a_star_distance(game_state, my_pos, c)) if capsules else None
+            dist_home = self.get_a_star_distance(game_state, my_pos, self.start)
+            if nearest_capsule and self.get_a_star_distance(game_state, my_pos, nearest_capsule) < dist_home:
                 return self._move_towards(game_state, nearest_capsule)
             return self._move_towards(game_state, self.start)
         if scared_ghosts:
@@ -246,19 +311,19 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             if carrying < MAX_CARRY:
                 food_list = self.get_food(game_state).as_list()
                 if food_list:
-                    food_list.sort(key=lambda f: self.get_maze_distance(my_pos, f))
+                    food_list.sort(key=lambda f: self.get_a_star_distance(game_state, my_pos, f))
                     return self._move_towards(game_state, food_list[0])
             return self._move_towards(game_state, self.start)
         food_list = self.get_food(game_state).as_list()
         if food_list:
-            food_list.sort(key=lambda f: self.get_maze_distance(my_pos, f))
+            food_list.sort(key=lambda f: self.get_a_star_distance(game_state, my_pos, f))
             return self._move_towards(game_state, food_list[0])
         return self._move_towards(game_state, self.start)
 
     def _move_towards(self, game_state, target):
         actions = game_state.get_legal_actions(self.index)
         best = None
-        best_d = float('inf')
+        best_d = float("inf")
         for a in actions:
             if a == Directions.STOP:
                 continue
@@ -266,7 +331,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
             pos2 = succ.get_agent_state(self.index).get_position()
             if pos2 is None:
                 continue
-            d = self.get_maze_distance(pos2, target)
+            d = self.get_a_star_distance(game_state, pos2, target)
             if d < best_d:
                 best_d = d
                 best = a
