@@ -8,6 +8,7 @@
 
 import random
 import contest.util as util
+import heapq
 
 from contest.capture_agents import CaptureAgent
 from contest.game import Directions
@@ -349,6 +350,58 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
     y_target = 4
 
+    def heuristic(self, pos, goal):
+        return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
+
+    def get_a_star_distance(self, game_state, start, goal):
+        start = (int(start[0]), int(start[1]))
+        goal  = (int(goal[0]), int(goal[1]))
+
+        if start == goal:
+            return 0
+
+        walls = game_state.get_walls()
+        width, height = walls.width, walls.height
+
+        open_heap = []
+        heapq.heappush(open_heap, (self.heuristic(start, goal), 0, start))
+
+        g_cost = {start: 0}
+        closed = set()
+        directions = [(1,0), (-1,0), (0,1), (0,-1)]
+
+        while open_heap:
+            f, g, pos = heapq.heappop(open_heap)
+
+            if pos in closed:
+                continue
+            closed.add(pos)
+
+            if pos == goal:
+                return g
+
+            x, y = pos
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                nxt = (nx, ny)
+
+                if not (0 <= nx < width and 0 <= ny < height):
+                    continue
+                if walls[nx][ny]:
+                    continue
+
+                tentative_g = g + 1
+
+                if nxt in g_cost and tentative_g >= g_cost[nxt]:
+                    continue
+
+                g_cost[nxt] = tentative_g
+                h = self.heuristic(nxt, goal)
+                f = tentative_g + h
+                heapq.heappush(open_heap, (f, tentative_g, nxt))
+
+        return float("inf")
+
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
@@ -356,7 +409,6 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         my_state = successor.get_agent_state(self.index)
         my_pos = my_state.get_position()
 
-        # Computes whether we're on defense (1) or offense (0)
         if my_state.scared_timer > 0:
             features['on_defense'] = 0
         else:
@@ -368,17 +420,20 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if self.red:
             border_x = width // 2 - 1
             target_x = border_x -3
+            while(walls[target_x][self.y_target]):
+                target_x -= 1
         else:
             border_x = width // 2
             target_x = border_x +3
+            while(walls[target_x][self.y_target]):
+                target_x += 1
         target = (target_x, self.y_target)
 
-        # Computes distance to invaders we can see
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
         if len(invaders) > 0 and my_state.scared_timer == 0:
-            dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
+            dists = [self.get_a_star_distance(game_state, my_pos, a.get_position()) for a in invaders]
             features['invader_distance'] = min(dists)
 
         if action == Directions.STOP: features['stop'] = 1
@@ -386,7 +441,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if action == rev: features['reverse'] = 1
 
         if len(invaders) == 0 and my_state.scared_timer == 0:
-            features['target_patrol_dis'] = self.get_maze_distance(my_pos, target)
+            features['target_patrol_dis'] = self.get_a_star_distance(game_state, my_pos, target)
             if my_pos == target:
                 self.y_target = 11 if self.y_target == 4 else 4
         else:
@@ -395,7 +450,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if my_state.scared_timer > 0:
             dangerous_enemies = [a for a in enemies if a.get_position() is not None]
             if len(dangerous_enemies) > 0:
-                dists_de = [self.get_maze_distance(my_pos, a.get_position()) for a in dangerous_enemies]
+                dists_de = [self.get_a_star_distance(game_state, my_pos, a.get_position()) for a in dangerous_enemies]
                 if min(dists_de)<5:
                     features['dangerous_enemy_dis'] = min(dists_de)
                 else:
@@ -409,20 +464,16 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
             food_list = self.get_food(successor).as_list()
             features['successor_score'] = -len(food_list)
             if len(food_list) > 0:
-                distances = [self.get_maze_distance(my_pos, f) for f in food_list]
+                distances = [self.get_a_star_distance(game_state, my_pos, f) for f in food_list]
                 features['distance_to_food'] = min(distances)
             else:
                 features['distance_to_food'] = 0
-            # my_pos = successor.get_agent_state(self.index).get_position()
-            # min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
-            # features['distance_to_food'] = min_distance
         else:
             if my_state.is_pacman:
                 features['distance_to_food'] = abs(border_x - my_pos[0])
             else:
                 features['distance_to_food'] = 0
-        print(features)
         return features
-
+        
     def get_weights(self, game_state, action):
         return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -5, 'target_patrol_dis': -7, 'distance_to_food': -10, 'dangerous_enemy_dis': 1000, 'successor_score': 100}
